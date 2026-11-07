@@ -12,6 +12,6 @@ import java.util.Map;
 public class HealthCheck {
     @GetMapping("/ping")
     public ResponseEntity<Map<String, Object>> health() {
-        return ResponseEntity.ok(Map.of("healthy", "pong"));
+        return ResponseEntity.ok(Map.of("healthy", "pong-v2"));
     }
 }
