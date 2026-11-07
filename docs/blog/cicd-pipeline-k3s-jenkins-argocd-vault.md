@@ -82,7 +82,7 @@ Trạng thái dùng: `pending`, `in-progress`, `done`, `blocked`.
 - [x] `done` — 7. Tạo pipeline dùng Jenkinsfile tập trung
 - [x] `done` — 8. Đóng gói image và đẩy lên Docker Hub
 - [x] `done` — 9. Tạo GitOps repository, Helm chart và Argo CD Application
-- [x] `done` — 10. Inject secret Vault vào ứng dụng
+- [ ] `in-progress` — 10. Inject secret Vault và externalize application config
 - [ ] `pending` — 11. Chạy end-to-end và kiểm tra rollback
 - [ ] `pending` — 12. Đóng gói lại thành bài viết hoàn chỉnh
 
@@ -753,20 +753,34 @@ Trong lần triển khai đầu, pod gặp `ImagePullBackOff` vì repository Doc
 
 ### Bước 10 — Secret Vault trong ứng dụng
 
-**Trạng thái:** `done`
+**Trạng thái:** `in-progress`
 
-Ứng dụng đọc một secret demo do Vault cung cấp qua cơ chế phù hợp với chart (ví dụ Vault Agent Injector). Secret không nằm trong GitOps values. Ghi lại đường đi của secret, quyền đọc và cách xác minh mà không lộ giá trị thật.
+File `application.yml` trong app repo vẫn giữ cấu hình bootstrap và fallback để chạy local. Khi deploy, Helm lấy file `charts/demo-cicd-backend/config/application.yml` từ GitOps repo, tạo ConfigMap và mount vào `/config/application.yml`. Biến môi trường `SPRING_CONFIG_ADDITIONAL_LOCATION=optional:file:/config/` khiến file GitOps được ưu tiên hơn file trong image.
 
-Pod ứng dụng dùng ServiceAccount `democicd-app`. Vault Agent Injector xác thực ServiceAccount qua Kubernetes auth, đọc policy `democicd-app` và ghi secret vào `/vault/secrets/message`. Ứng dụng đọc file này rồi expose qua endpoint `/api/v1/secret`.
+GitOps config import file do Vault Agent render:
 
-Kiểm tra pod đã có secret file:
+```yaml
+spring:
+  config:
+    import: optional:file:/vault/secrets/application-secrets.yml
+app:
+  secret-message: ${app.secrets.message}
+```
+
+Vault Agent Injector xác thực ServiceAccount `democicd-app`, đọc policy `democicd-app` và render toàn bộ KV data vào `/vault/secrets/application-secrets.yml`. Template dùng `toJSON`, vì Vault Agent/Consul Template không có hàm `quote`.
+
+Thay đổi file cấu hình non-secret trong GitOps repo sẽ đổi checksum pod và tạo rollout mới. Thay đổi secret trong Vault không tự restart Spring bean đã đọc bằng `@Value`; cần rollout lại Deployment hoặc triển khai cơ chế refresh riêng.
+
+Kiểm tra hai file đã được mount mà không in secret ra log:
 
 ```bash
 POD="$(kubectl get pods -n democicd \
   -o jsonpath='{.items[0].metadata.name}')"
 
 kubectl exec -n democicd "$POD" -c app -- \
-  cat /vault/secrets/message
+  sh -c 'test -s /config/application.yml && \
+         test -s /vault/secrets/application-secrets.yml && \
+         echo "external config and Vault secret file: ok"'
 ```
 
 Kiểm tra qua API:
@@ -784,10 +798,58 @@ curl -i http://127.0.0.1:18083/api/v1/secret
 ```text
 namespace: democicd
 Vault Agent injection: success
-secret file: /vault/secrets/message
+external config: /config/application.yml
+rendered secret config: /vault/secrets/application-secrets.yml
+Argo CD: Synced / Healthy
+new pod: 2/2 Running
 API: HTTP/1.1 200
 response: {"message":"[redacted demo value]"}
 ```
+
+#### Đổi secret qua Vault UI
+
+Mở Vault UI qua Tailscale:
+
+```bash
+# terminal trên server
+kubectl -n vault port-forward svc/vault 18200:8200
+
+# terminal trên máy quản trị
+ssh -N -L 18200:127.0.0.1:18200 sonnvt@100.101.40.114
+```
+
+Mở `http://127.0.0.1:18200/ui`, đăng nhập bằng Vault token, vào **Secrets → app-secrets → democicd**, sửa key `message` hoặc thêm key mới rồi lưu.
+
+Nếu thêm key mới, thêm placeholder tương ứng trong GitOps `application.yml`, ví dụ:
+
+```yaml
+app:
+  api-key: ${app.secrets.api-key}
+```
+
+Sau khi đổi secret, rollout lại ứng dụng để Spring đọc giá trị mới:
+
+```bash
+kubectl rollout restart deployment/demo-cicd-backend-demo-cicd-backend \
+  -n democicd
+kubectl rollout status deployment/demo-cicd-backend-demo-cicd-backend \
+  -n democicd
+```
+
+Có thể cập nhật bằng CLI thay cho UI:
+
+```bash
+kubectl exec -it -n vault vault-0 -- sh
+vault login
+vault kv patch app-secrets/democicd message='new-demo-value'
+```
+
+#### Lỗi thực tế cần lưu ý
+
+- Argo CD có thể báo `Synced` nhưng `Progressing` nếu ReplicaSet mới chưa Ready; cần xem pod mới, không chỉ pod cũ.
+- `kubectl get pods -o jsonpath='{.items[0]...}'` có thể chọn pod cũ trong lúc rolling update. Luôn lấy đúng pod đang `Init:Error` để xem `vault-agent-init` log.
+- Template dùng hàm không được Vault Agent hỗ trợ sẽ làm init container fail. Lỗi thực tế là `function "quote" not defined`; đổi sang `toJSON` đã khắc phục.
+- Pod cũ chuyển `Terminating` hoặc `Error` sau khi pod mới `2/2 Running` là kết quả bình thường của rolling update.
 
 ### Bước 11 — Kiểm tra end-to-end và rollback
 
