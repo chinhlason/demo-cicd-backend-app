@@ -83,7 +83,7 @@ Trạng thái dùng: `pending`, `in-progress`, `done`, `blocked`.
 - [x] `done` — 8. Đóng gói image và đẩy lên Docker Hub
 - [x] `done` — 9. Tạo GitOps repository, Helm chart và Argo CD Application
 - [x] `done` — 10. Inject secret Vault và externalize application config
-- [ ] `in-progress` — 11. Expose ứng dụng qua Ingress
+- [x] `done` — 11. Expose ứng dụng qua Ingress
 - [ ] `pending` — 12. Chạy end-to-end và kiểm tra rollback
 - [ ] `pending` — 13. Đóng gói lại thành bài viết hoàn chỉnh
 
@@ -854,7 +854,7 @@ vault kv patch app-secrets/democicd message='new-demo-value'
 
 ### Bước 11 — Expose ứng dụng qua Ingress
 
-**Trạng thái:** `in-progress`
+**Trạng thái:** `done`
 
 K3s đã cài Traefik mặc định. Helm chart tạo Ingress `networking.k8s.io/v1` với `ingressClassName: traefik`, route `/` tới Service ClusterIP của backend. Chưa cấu hình host hoặc TLS; request được nhận theo IP của node.
 
@@ -891,10 +891,11 @@ curl -i http://100.101.40.114/api/v1/secret
 **Bằng chứng cần ghi:**
 
 ```text
-Ingress: [output]
-Traefik service: [output]
-curl http://100.101.40.114/api/v1/ping: [HTTP output]
-curl http://100.101.40.114/api/v1/secret: [HTTP output đã ẩn secret]
+Ingress: created and routed by Traefik
+Traefik service: Running
+curl http://100.101.40.114/api/v1/ping: HTTP 200
+curl http://100.101.40.114/api/v1/secret: HTTP 200
+network path: Tailscale → node port 80 → Traefik → ClusterIP Service → Pod
 ```
 
 ### Bước 12 — Kiểm tra end-to-end và rollback
