@@ -26,7 +26,7 @@ Phạm vi demo:
 
 - GitHub là nguồn mã duy nhất.
 - Một repository ứng dụng, một repository tập trung Jenkinsfile, và một repository GitOps chứa Helm chart/values.
-- Jenkins chạy test, build image, đẩy image lên Docker Hub và cập nhật image tag trong repository GitOps.
+- Jenkins chạy test, build image và đẩy image lên Docker Hub; repository GitOps lưu image digest bất biến để Argo CD triển khai.
 - Argo CD theo dõi repository GitOps rồi đồng bộ workload vào K3s.
 - Vault cấp secret cho Jenkins và cung cấp một secret nhỏ cho ứng dụng.
 - Loại dependency JPA chưa dùng để test không còn phụ thuộc datasource.
@@ -81,7 +81,7 @@ Trạng thái dùng: `pending`, `in-progress`, `done`, `blocked`.
 - [x] `done` — 6. Cài Jenkins, cấu hình credential và polling GitHub
 - [ ] `in-progress` — 7. Tạo pipeline dùng Jenkinsfile tập trung
 - [x] `done` — 8. Đóng gói image và đẩy lên Docker Hub
-- [ ] `in-progress` — 9. Tạo GitOps repository, Helm chart và Argo CD Application
+- [x] `done` — 9. Tạo GitOps repository, Helm chart và Argo CD Application
 - [ ] `pending` — 10. Inject secret Vault vào ứng dụng
 - [ ] `pending` — 11. Chạy end-to-end và kiểm tra rollback
 - [ ] `pending` — 12. Đóng gói lại thành bài viết hoàn chỉnh
@@ -415,14 +415,14 @@ Job `demo-cicd-backend` đã đọc Jenkinsfile từ `demo-cicd-pipeline`; SCM p
 
 **Trạng thái:** `in-progress`
 
-Jenkinsfile trong `pipeline-repo` nhận các tham số onboarding cần thiết, sau đó thực hiện các stage:
+Jenkinsfile trong `pipeline-repo` nhận các tham số onboarding cần thiết, sau đó thực hiện các stage đã xác minh:
 
 1. Checkout `app-repo`.
-2. Lấy secret cần thiết từ Vault.
-3. Chạy test và package.
-4. Build image với tag commit SHA.
-5. Push image lên Docker Hub.
-6. Cập nhật image tag trong `gitops-repo` và commit thay đổi.
+2. Chạy test và package.
+3. Build image với tag commit SHA.
+4. Push image lên Docker Hub.
+
+Việc đọc secret từ Vault và tự động commit thay đổi vào `gitops-repo` vẫn là phần tiếp theo của bài demo. Ở bước triển khai hiện tại, digest được cập nhật vào GitOps repo sau khi Jenkins push image thành công.
 
 **Bằng chứng cần ghi:**
 
@@ -438,7 +438,7 @@ Lần chạy đầu tiên fail vì agent Jenkins dùng Java 21 trong khi `pom.xm
 
 ### Bước 8 — Docker Hub
 
-**Trạng thái:** `in-progress`
+**Trạng thái:** `done`
 
 Tạo repository image, cấu hình credential dạng token trong Jenkins và kiểm tra image tag bất biến theo commit. Không ghi token vào log.
 
@@ -447,22 +447,22 @@ App repo đã có `Dockerfile` runtime dùng `eclipse-temurin:25-jre`; Docker Hu
 **Bằng chứng cần ghi:**
 
 ```text
-image: [dockerhub-user/image]
+image: sonnvt/demo-cicd-backend-app
 credential ID: dockerhub
-tag: short commit SHA (12 ký tự)
+tag: 969c8d1a360b
 push: success
-digest: chưa ghi nhận từ build log
+digest: sha256:a00b078e935b8f874d1393f6da14d15565879224985933b1339ba377142a1bb0
 ```
 
 Jenkins đã package ứng dụng, build Docker image từ `Dockerfile` và push thành công lên Docker Hub. Jenkins agent được cấp quyền dùng Docker socket; Docker token không xuất hiện trong log hoặc tài liệu.
 
 ### Bước 9 — GitOps, Helm và Argo CD
 
-**Trạng thái:** `in-progress`
+**Trạng thái:** `done`
 
-`gitops-repo` chứa chart tối thiểu cho Deployment, Service, Secret reference và values theo môi trường. Argo CD Application theo dõi repository này; Jenkins chỉ thay đổi image tag, còn Argo CD chịu trách nhiệm đồng bộ vào K3s.
+`gitops-repo` chứa chart tối thiểu cho Deployment, Service, Secret reference và values theo môi trường. Argo CD Application theo dõi repository này; GitOps values giữ image digest, còn Argo CD chịu trách nhiệm đồng bộ vào K3s.
 
-GitOps repo đã có chart `charts/demo-cicd-backend` tại commit `6c04f7e`. Argo CD đã được cài vào namespace `argocd`; toàn bộ controller, repo server, server, Redis, Dex và notifications đều `1/1 Running`.
+GitOps repo có chart `charts/demo-cicd-backend`. Argo CD đã được cài vào namespace `argocd`; toàn bộ controller, repo server, server, Redis, Dex và notifications đều `1/1 Running`.
 
 GitOps repository `https://github.com/chinhlason/demo-cicd-gitops.git` đã kết nối thành công trong Argo CD bằng HTTPS credential. PAT chỉ lưu trong Argo CD credential store, không ghi vào Git hoặc blog.
 
@@ -509,10 +509,23 @@ Mở `https://127.0.0.1:18082`. Port `18082` được chọn vì các port `8080
 **Bằng chứng cần ghi:**
 
 ```text
-argocd app get [name]: [output]
-sync status/health: [value]
-deployed image: [value]
+pipeline repo commit: e467422
+gitops repo commits: dbe8788, 0a072b3
+image: sonnvt/demo-cicd-backend-app@sha256:a00b078e935b8f874d1393f6da14d15565879224985933b1339ba377142a1bb0
+imagePullSecrets: dockerhub-pull
+Docker Hub token permission: Repo Read-only
+kubectl get application -n argocd demo-cicd-backend:
+  SYNC STATUS: Synced
+  HEALTH STATUS: Healthy
+kubectl get pods -n democicd:
+  READY: 1/1
+  STATUS: Running
+curl http://127.0.0.1:18083/api/v1/ping:
+  HTTP/1.1 200
+  {"healthy":"pong"}
 ```
+
+Trong lần triển khai đầu, pod gặp `ImagePullBackOff` vì repository Docker Hub private nhưng token chỉ có quyền `Repo Public Read-only`. Sau khi tạo token `Repo Read-only`, cập nhật secret `dockerhub-pull` với username `sonnvt` và đồng bộ lại Argo CD, pod pull được image và trở thành `Running`.
 
 ### Bước 10 — Secret Vault trong ứng dụng
 
