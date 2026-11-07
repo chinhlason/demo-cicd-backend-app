@@ -79,7 +79,7 @@ Trạng thái dùng: `pending`, `in-progress`, `done`, `blocked`.
 - [x] `done` — 4. Cài K3s một node và kiểm tra cluster
 - [x] `done` — 5. Cài Helm và triển khai Vault
 - [x] `done` — 6. Cài Jenkins, cấu hình credential và polling GitHub
-- [ ] `in-progress` — 7. Tạo pipeline dùng Jenkinsfile tập trung
+- [x] `done` — 7. Tạo pipeline dùng Jenkinsfile tập trung
 - [x] `done` — 8. Đóng gói image và đẩy lên Docker Hub
 - [x] `done` — 9. Tạo GitOps repository, Helm chart và Argo CD Application
 - [ ] `pending` — 10. Inject secret Vault vào ứng dụng
@@ -413,7 +413,7 @@ Job `demo-cicd-backend` đã đọc Jenkinsfile từ `demo-cicd-pipeline`; SCM p
 
 ### Bước 7 — Pipeline dùng Jenkinsfile tập trung
 
-**Trạng thái:** `in-progress`
+**Trạng thái:** `done`
 
 Jenkinsfile trong `pipeline-repo` không chứa cấu hình riêng của từng service. Các giá trị onboarding được khai báo ở Jenkins job; Jenkinsfile trung tâm chỉ validate và sử dụng chúng.
 
@@ -556,10 +556,15 @@ job: demo-cicd-backend
 pipeline source: demo-cicd-pipeline/Jenkinsfile
 application checkout: success
 Test: success
-build result: SUCCESS
+Package/build/push image: success
+GitOps commit update: success
+Sync Argo CD từ Jenkins: success
+Argo CD Application: Synced / Healthy
+Deployment pod: 1/1 Running
+pipeline commit: 7fe9723 (ci: trigger argocd sync from jenkins)
 ```
 
-Lần chạy đầu tiên fail vì agent Jenkins dùng Java 21 trong khi `pom.xml` yêu cầu release 25 (`release version 25 not supported`). Sau khi cài JDK 25 trên server, pipeline chạy thành công các stage test, package và push image; job mới sẽ xác minh thêm stage tự động cập nhật GitOps.
+Lần chạy đầu tiên fail vì agent Jenkins dùng Java 21 trong khi `pom.xml` yêu cầu release 25 (`release version 25 not supported`). Sau khi cài JDK 25 trên server, pipeline chạy thành công các stage test, package, push image, cập nhật GitOps và gọi trực tiếp Kubernetes API để trigger Argo CD sync. Argo CD không cần expose ra Internet cho GitHub webhook.
 
 ### Bước 8 — Docker Hub
 
