@@ -82,7 +82,7 @@ Trạng thái dùng: `pending`, `in-progress`, `done`, `blocked`.
 - [x] `done` — 7. Tạo pipeline dùng Jenkinsfile tập trung
 - [x] `done` — 8. Đóng gói image và đẩy lên Docker Hub
 - [x] `done` — 9. Tạo GitOps repository, Helm chart và Argo CD Application
-- [ ] `pending` — 10. Inject secret Vault vào ứng dụng
+- [x] `done` — 10. Inject secret Vault vào ứng dụng
 - [ ] `pending` — 11. Chạy end-to-end và kiểm tra rollback
 - [ ] `pending` — 12. Đóng gói lại thành bài viết hoàn chỉnh
 
@@ -753,15 +753,40 @@ Trong lần triển khai đầu, pod gặp `ImagePullBackOff` vì repository Doc
 
 ### Bước 10 — Secret Vault trong ứng dụng
 
-**Trạng thái:** `pending`
+**Trạng thái:** `done`
 
 Ứng dụng đọc một secret demo do Vault cung cấp qua cơ chế phù hợp với chart (ví dụ Vault Agent Injector). Secret không nằm trong GitOps values. Ghi lại đường đi của secret, quyền đọc và cách xác minh mà không lộ giá trị thật.
+
+Pod ứng dụng dùng ServiceAccount `democicd-app`. Vault Agent Injector xác thực ServiceAccount qua Kubernetes auth, đọc policy `democicd-app` và ghi secret vào `/vault/secrets/message`. Ứng dụng đọc file này rồi expose qua endpoint `/api/v1/secret`.
+
+Kiểm tra pod đã có secret file:
+
+```bash
+POD="$(kubectl get pods -n democicd \
+  -o jsonpath='{.items[0].metadata.name}')"
+
+kubectl exec -n democicd "$POD" -c app -- \
+  cat /vault/secrets/message
+```
+
+Kiểm tra qua API:
+
+```bash
+kubectl port-forward -n democicd \
+  svc/demo-cicd-backend-demo-cicd-backend 18083:8080
+
+# terminal khác
+curl -i http://127.0.0.1:18083/api/v1/secret
+```
 
 **Bằng chứng cần ghi:**
 
 ```text
-pod annotations/mount: [redacted output]
-application health/log check: [output]
+namespace: democicd
+Vault Agent injection: success
+secret file: /vault/secrets/message
+API: HTTP/1.1 200
+response: {"message":"[redacted demo value]"}
 ```
 
 ### Bước 11 — Kiểm tra end-to-end và rollback
