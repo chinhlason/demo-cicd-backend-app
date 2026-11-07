@@ -466,6 +466,46 @@ GitOps repo đã có chart `charts/demo-cicd-backend` tại commit `6c04f7e`. Ar
 
 GitOps repository `https://github.com/chinhlason/demo-cicd-gitops.git` đã kết nối thành công trong Argo CD bằng HTTPS credential. PAT chỉ lưu trong Argo CD credential store, không ghi vào Git hoặc blog.
 
+**Các lệnh cài đặt và truy cập Argo CD:**
+
+```bash
+kubectl create namespace argocd \
+  --dry-run=client -o yaml \
+  | kubectl apply -f -
+
+kubectl apply -n argocd \
+  --server-side \
+  --force-conflicts \
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+kubectl wait \
+  --for=condition=Ready pod \
+  --all \
+  -n argocd \
+  --timeout=180s
+
+kubectl get pods -n argocd
+```
+
+Lấy mật khẩu admin lần đầu:
+
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+Truy cập UI qua port-forward trên server và SSH tunnel từ máy quản trị:
+
+```bash
+# terminal SSH trên server
+kubectl -n argocd port-forward svc/argocd-server 18082:443
+
+# terminal trên máy quản trị
+ssh -N -L 18082:127.0.0.1:18082 sonnvt@100.101.40.114
+```
+
+Mở `https://127.0.0.1:18082`. Port `18082` được chọn vì các port `8080`, `8081` và `8082` đã có dịch vụ khác sử dụng.
+
 **Bằng chứng cần ghi:**
 
 ```text
