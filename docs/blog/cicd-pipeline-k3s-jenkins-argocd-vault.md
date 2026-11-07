@@ -66,7 +66,7 @@ Jenkins đọc Jenkinsfile từ repository tập trung. Khi onboarding service m
 | Repository | Nội dung | Ai cập nhật |
 |---|---|---|
 | `app-repo` | Mã nguồn, test, Dockerfile và metadata build cần thiết | Developer |
-| `pipeline-repo` | Jenkinsfile dùng chung và quy ước tham số onboarding | Platform/Jenkins |
+| `pipeline-repo` | Jenkinsfile dùng chung và quy tắc validate onboarding | Platform/Jenkins |
 | `gitops-repo` | Helm chart, values theo môi trường, Argo CD Application | Jenkins/Platform |
 
 ## Tiến độ triển khai
@@ -415,14 +415,39 @@ Job `demo-cicd-backend` đã đọc Jenkinsfile từ `demo-cicd-pipeline`; SCM p
 
 **Trạng thái:** `in-progress`
 
-Jenkinsfile trong `pipeline-repo` nhận các tham số onboarding cần thiết, sau đó thực hiện các stage đã xác minh:
+Jenkinsfile trong `pipeline-repo` không chứa cấu hình riêng của từng service. Các giá trị onboarding được khai báo ở Jenkins job; Jenkinsfile trung tâm chỉ validate và sử dụng chúng.
+
+Khi tạo job mới, cấu hình:
+
+1. **New Item → Pipeline**.
+2. Trong **General**, chọn **This project is parameterized**.
+3. Thêm sáu String Parameter:
+
+   | Name | Giá trị mẫu |
+   |---|---|
+   | `APP_REPO_URL` | `https://github.com/chinhlason/demo-cicd-backend-app.git` |
+   | `APP_BRANCH` | `main` |
+   | `DOCKER_IMAGE` | `sonnvt/demo-cicd-backend-app` |
+   | `GITOPS_REPO_URL` | `https://github.com/chinhlason/demo-cicd-gitops.git` |
+   | `GITOPS_BRANCH` | `main` |
+   | `GITOPS_VALUES_FILE` | `charts/demo-cicd-backend/values.yaml` |
+
+4. Trong **Pipeline**, chọn **Pipeline script from SCM**.
+5. Chọn Git, nhập `https://github.com/chinhlason/demo-cicd-pipeline.git`, credential `github-https`, branch `*/main` và Script Path `Jenkinsfile`.
+6. Trong **Triggers**, bật **Poll SCM** với lịch `H/5 * * * *`.
+7. Lưu job và chạy **Build with Parameters**.
+
+Jenkinsfile sẽ dừng ngay ở stage `Validate onboarding config` nếu job thiếu một trong sáu parameter trên.
+
+Các stage của pipeline:
 
 1. Checkout `app-repo`.
 2. Chạy test và package.
 3. Build image với tag commit SHA.
 4. Push image lên Docker Hub.
+5. Checkout `gitops-repo`, cập nhật image repository/digest, commit và push thay đổi.
 
-Việc đọc secret từ Vault và tự động commit thay đổi vào `gitops-repo` vẫn là phần tiếp theo của bài demo. Ở bước triển khai hiện tại, digest được cập nhật vào GitOps repo sau khi Jenkins push image thành công.
+Việc đọc secret từ Vault vẫn là phần tiếp theo của bài demo. Credential `github-https` cần có quyền ghi vào GitOps repository để stage cuối hoạt động.
 
 **Bằng chứng cần ghi:**
 
@@ -434,7 +459,7 @@ Test: success
 build result: SUCCESS
 ```
 
-Lần chạy đầu tiên fail vì agent Jenkins dùng Java 21 trong khi `pom.xml` yêu cầu release 25 (`release version 25 not supported`). Sau khi cài JDK 25 trên server, pipeline chạy thành công. Các stage build image, push Docker Hub và cập nhật GitOps sẽ bổ sung ở các bước tiếp theo.
+Lần chạy đầu tiên fail vì agent Jenkins dùng Java 21 trong khi `pom.xml` yêu cầu release 25 (`release version 25 not supported`). Sau khi cài JDK 25 trên server, pipeline chạy thành công các stage test, package và push image; job mới sẽ xác minh thêm stage tự động cập nhật GitOps.
 
 ### Bước 8 — Docker Hub
 
