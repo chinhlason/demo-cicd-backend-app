@@ -439,6 +439,19 @@ Khi tạo job mới, cấu hình:
 
 Jenkinsfile sẽ dừng ngay ở stage `Validate onboarding config` nếu job thiếu một trong sáu parameter trên.
 
+#### Phân quyền user trong Jenkins
+
+Để user chỉ chạy job mà không sửa cấu hình parameter, bật **Project-based Matrix Authorization Strategy** trong **Manage Jenkins → Security**. Ở cấu hình job, bật **Enable project-based security** và cấp cho user các quyền tối thiểu:
+
+- `Overall/Read`
+- `Job/Read`
+- `Job/Build`
+- `Job/Cancel` nếu cần dừng build
+
+Không cấp cho user thường các quyền `Job/Configure`, `Job/Create`, `Job/Delete`, `Job/Move`, `Credentials/Create` hoặc `Overall/Administer`. `Job/Configure` cho phép sửa cấu hình job, còn `Job/Build` chỉ cho phép khởi chạy job. Xem thêm [Jenkins permissions](https://www.jenkins.io/doc/book/security/access-control/permissions/).
+
+`Job/Build` vẫn cho phép user nhập giá trị khác trong màn hình **Build with Parameters** cho từng lần chạy. Nếu giá trị service phải cố định tuyệt đối, không dùng String Parameter cho giá trị đó; đặt cấu hình trong Jenkinsfile/config repo được bảo vệ hoặc thêm allowlist validation trong pipeline. User có `Overall/Administer` luôn có thể vượt qua các giới hạn này.
+
 Các stage của pipeline:
 
 1. Checkout `app-repo`.
