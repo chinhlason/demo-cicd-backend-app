@@ -82,9 +82,10 @@ Trạng thái dùng: `pending`, `in-progress`, `done`, `blocked`.
 - [x] `done` — 7. Tạo pipeline dùng Jenkinsfile tập trung
 - [x] `done` — 8. Đóng gói image và đẩy lên Docker Hub
 - [x] `done` — 9. Tạo GitOps repository, Helm chart và Argo CD Application
-- [ ] `in-progress` — 10. Inject secret Vault và externalize application config
-- [ ] `pending` — 11. Chạy end-to-end và kiểm tra rollback
-- [ ] `pending` — 12. Đóng gói lại thành bài viết hoàn chỉnh
+- [x] `done` — 10. Inject secret Vault và externalize application config
+- [ ] `in-progress` — 11. Expose ứng dụng qua Ingress
+- [ ] `pending` — 12. Chạy end-to-end và kiểm tra rollback
+- [ ] `pending` — 13. Đóng gói lại thành bài viết hoàn chỉnh
 
 ## Nhật ký từng bước
 
@@ -753,7 +754,7 @@ Trong lần triển khai đầu, pod gặp `ImagePullBackOff` vì repository Doc
 
 ### Bước 10 — Secret Vault trong ứng dụng
 
-**Trạng thái:** `in-progress`
+**Trạng thái:** `done`
 
 File `application.yml` trong app repo vẫn giữ cấu hình bootstrap và fallback để chạy local. Khi deploy, Helm lấy file `charts/demo-cicd-backend/config/application.yml` từ GitOps repo, tạo ConfigMap và mount vào `/config/application.yml`. Biến môi trường `SPRING_CONFIG_ADDITIONAL_LOCATION=optional:file:/config/` khiến file GitOps được ưu tiên hơn file trong image.
 
@@ -851,7 +852,52 @@ vault kv patch app-secrets/democicd message='new-demo-value'
 - Template dùng hàm không được Vault Agent hỗ trợ sẽ làm init container fail. Lỗi thực tế là `function "quote" not defined`; đổi sang `toJSON` đã khắc phục.
 - Pod cũ chuyển `Terminating` hoặc `Error` sau khi pod mới `2/2 Running` là kết quả bình thường của rolling update.
 
-### Bước 11 — Kiểm tra end-to-end và rollback
+### Bước 11 — Expose ứng dụng qua Ingress
+
+**Trạng thái:** `in-progress`
+
+K3s đã cài Traefik mặc định. Helm chart tạo Ingress `networking.k8s.io/v1` với `ingressClassName: traefik`, route `/` tới Service ClusterIP của backend. Chưa cấu hình host hoặc TLS; request được nhận theo IP của node.
+
+Sau khi Argo CD sync chart, kiểm tra Ingress:
+
+```bash
+kubectl get ingress -n democicd
+kubectl describe ingress -n democicd \
+  demo-cicd-backend-demo-cicd-backend
+```
+
+Kiểm tra Traefik:
+
+```bash
+kubectl get svc -n kube-system traefik
+kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik
+```
+
+Nếu Traefik đang bind cổng 80 trên node, gọi trực tiếp qua địa chỉ Tailscale:
+
+```bash
+curl -i http://100.101.40.114/api/v1/ping
+curl -i http://100.101.40.114/api/v1/secret
+```
+
+Địa chỉ Tailscale chỉ truy cập được từ mạng tailnet. Muốn public Internet cần thêm public IP/firewall, DNS và TLS certificate; không mở các cổng quản trị Jenkins, Argo CD hoặc Vault ra Internet.
+
+#### Lỗi thường gặp
+
+- Ingress tồn tại nhưng không truy cập được nếu Traefik chưa bind cổng 80, firewall chặn hoặc request đi nhầm interface.
+- `EXTERNAL-IP` của Service Traefik có thể là IP nội bộ K3s; kiểm tra đường đi thực tế bằng `curl` từ máy client.
+- Host rule chưa được cấu hình nên route hiện nhận mọi `Host`; khi có domain, thêm host và TLS trước khi public.
+
+**Bằng chứng cần ghi:**
+
+```text
+Ingress: [output]
+Traefik service: [output]
+curl http://100.101.40.114/api/v1/ping: [HTTP output]
+curl http://100.101.40.114/api/v1/secret: [HTTP output đã ẩn secret]
+```
+
+### Bước 12 — Kiểm tra end-to-end và rollback
 
 **Trạng thái:** `pending`
 
