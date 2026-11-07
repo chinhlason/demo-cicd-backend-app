@@ -386,6 +386,9 @@ Cài Jenkins trên server, chỉ expose qua Tailscale. Cấu hình credential t�
 Jenkins URL (Tailscale): http://100.101.40.114:18080
 service: active
 listen: 100.101.40.114:18080 (Java, Tailscale)
+setup wizard: completed
+dashboard: opened successfully
+admin username: không ghi vào tài liệu
 polling interval: [value]
 credential IDs (names only): [list]
 ```
@@ -400,6 +403,8 @@ LISTEN: 100.101.40.114:18080, process java
 ```
 
 Port mặc định `8080` đã được `blog-api-1` sử dụng và `8081` đã được `blog-web-1` sử dụng. Jenkins được cấu hình qua systemd drop-in với `JENKINS_PORT=18080`, `JENKINS_LISTEN_ADDRESS=100.101.40.114` và `JENKINS_OPTS=--httpPort=18080 --httpListenAddress=100.101.40.114`. Truy cập quản trị chỉ qua địa chỉ Tailscale; credential khởi tạo không ghi vào blog.
+
+Jenkins home cũ đã được di chuyển sang thư mục backup trước khi tạo home mới. Setup wizard đã hoàn tất và admin mới đã mở được dashboard. User, password và token không được ghi vào repository.
 
 ### Bước 7 — Pipeline dùng Jenkinsfile tập trung
 
