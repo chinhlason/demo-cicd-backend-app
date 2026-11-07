@@ -431,13 +431,14 @@ Khi tạo job mới, cấu hình:
    | `GITOPS_REPO_URL` | `https://github.com/chinhlason/demo-cicd-gitops.git` |
    | `GITOPS_BRANCH` | `main` |
    | `GITOPS_VALUES_FILE` | `charts/demo-cicd-backend/values.yaml` |
+   | `ARGOCD_APPLICATION` | `demo-cicd-backend` |
 
 4. Trong **Pipeline**, chọn **Pipeline script from SCM**.
 5. Chọn Git, nhập `https://github.com/chinhlason/demo-cicd-pipeline.git`, credential `github-https`, branch `*/main` và Script Path `Jenkinsfile`.
 6. Trong **Triggers**, bật **Poll SCM** với lịch `H/5 * * * *`.
 7. Lưu job và chạy **Build with Parameters**.
 
-Jenkinsfile sẽ dừng ngay ở stage `Validate onboarding config` nếu job thiếu một trong sáu parameter trên.
+Jenkinsfile sẽ dừng ngay ở stage `Validate onboarding config` nếu job thiếu một trong bảy parameter trên.
 
 #### Phân quyền user trong Jenkins
 
@@ -459,8 +460,94 @@ Các stage của pipeline:
 3. Build image với tag commit SHA.
 4. Push image lên Docker Hub.
 5. Checkout `gitops-repo`, cập nhật image repository/digest, commit và push thay đổi.
+6. Gọi Kubernetes API để trigger sync Application và chờ trạng thái `Synced/Healthy`.
 
 Việc đọc secret từ Vault vẫn là phần tiếp theo của bài demo. Credential `github-https` cần có quyền ghi vào GitOps repository để stage cuối hoạt động.
+
+#### Credential và RBAC cho stage sync Argo CD
+
+Jenkins không dùng kubeconfig cluster-admin. Tạo ServiceAccount chỉ được `get` và `patch` Application trong namespace `argocd`:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jenkins-argocd-sync
+  namespace: argocd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jenkins-argocd-sync
+  namespace: argocd
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-argocd-sync
+  namespace: argocd
+subjects:
+  - kind: ServiceAccount
+    name: jenkins-argocd-sync
+    namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: jenkins-argocd-sync
+EOF
+```
+
+Tạo kubeconfig riêng cho ServiceAccount rồi lưu dưới dạng Jenkins **Secret file** với credential ID `argocd-sync-kubeconfig`:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jenkins-argocd-sync-token
+  namespace: argocd
+  annotations:
+    kubernetes.io/service-account.name: jenkins-argocd-sync
+type: kubernetes.io/service-account-token
+EOF
+
+until kubectl -n argocd get secret jenkins-argocd-sync-token \
+  -o jsonpath='{.data.token}' | grep -q .; do sleep 1; done
+
+KUBE_SERVER="$(kubectl config view --raw -o jsonpath='{.clusters[0].cluster.server}')"
+KUBE_CA="$(kubectl config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
+KUBE_TOKEN="$(kubectl -n argocd get secret jenkins-argocd-sync-token \
+  -o jsonpath='{.data.token}' | base64 -d)"
+
+cat >/tmp/argocd-sync-kubeconfig <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+  - name: k3s
+    cluster:
+      server: ${KUBE_SERVER}
+      certificate-authority-data: ${KUBE_CA}
+users:
+  - name: jenkins-argocd-sync
+    user:
+      token: ${KUBE_TOKEN}
+contexts:
+  - name: argocd-sync
+    context:
+      cluster: k3s
+      user: jenkins-argocd-sync
+current-context: argocd-sync
+EOF
+
+chmod 600 /tmp/argocd-sync-kubeconfig
+```
+
+Kubeconfig này chỉ dành cho demo; token ServiceAccount cần được lưu trong Jenkins Credential Store và luân phiên định kỳ.
 
 **Bằng chứng cần ghi:**
 
