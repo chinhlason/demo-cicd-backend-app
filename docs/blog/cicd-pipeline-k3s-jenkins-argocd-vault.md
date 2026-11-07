@@ -1,7 +1,7 @@
 ---
 title: "Xây dựng CI/CD với Jenkins, GitHub, Docker Hub, K3s, Argo CD, Helm và Vault"
 slug: cicd-pipeline-k3s-jenkins-argocd-vault
-description: "Hướng dẫn triển khai một pipeline CI/CD thực tế cho Spring Boot: Jenkins đọc Jenkinsfile tập trung, build image theo commit, cập nhật GitOps, đồng bộ Argo CD, inject secret bằng Vault Agent và expose ứng dụng qua Traefik Ingress."
+description: "Ghi lại cách triển khai một pipeline CI/CD thực tế cho Spring Boot: Jenkins đọc Jenkinsfile tập trung, build image theo commit, cập nhật GitOps, đồng bộ Argo CD, inject secret bằng Vault Agent và đưa ứng dụng ra ngoài qua Traefik Ingress."
 status: draft
 language: vi
 tags:
@@ -19,9 +19,9 @@ updated: 2026-11-07
 
 # Xây dựng CI/CD với Jenkins, GitHub, Docker Hub, K3s, Argo CD, Helm và Vault
 
-Bài viết này ghi lại cách đưa một ứng dụng Spring Boot từ GitHub lên Kubernetes một node bằng Jenkins, Docker Hub và Argo CD. Jenkinsfile được lưu trong một repository tập trung; mỗi service mới chỉ cần tạo job và khai báo các tham số onboarding.
+Mình bắt đầu từ một ứng dụng Spring Boot chạy được local và đi từng bước cho đến khi request đi qua Ingress vào pod trên K3s. Jenkinsfile được đặt trong một repository riêng, vì vậy khi thêm service mới mình chỉ cần tạo job và khai báo vài tham số onboarding thay vì copy lại cả pipeline.
 
-Phần triển khai đã chạy thành công đến Ingress: Argo CD đạt `Synced/Healthy`, pod chạy `2/2 Running`, `/api/v1/ping` và `/api/v1/secret` trả HTTP 200. Bài cũng ghi lại các lỗi thật đã gặp, cách xử lý và những phần còn pending để không biến một demo thành một quy trình có vẻ hoàn hảo nhưng không kiểm chứng được.
+Luồng chính đã chạy đến Ingress: Argo CD đạt `Synced/Healthy`, pod lên `2/2 Running`, và hai API trả HTTP 200. Mình giữ lại cả những lần chạy lỗi, vì đó mới là phần giúp bài này hữu ích khi triển khai trên một server thật.
 
 > **Tóm tắt nhanh**
 > - GitHub là nguồn mã duy nhất; Jenkins polling GitHub qua mạng Tailscale, không cần webhook công khai.
@@ -30,7 +30,7 @@ Phần triển khai đã chạy thành công đến Ingress: Argo CD đạt `Syn
 > - Jenkins hiện dùng Jenkins Credential Store. Vault đã được tích hợp vào workload ứng dụng; Jenkins đọc credential trực tiếp từ Vault chưa nằm trong demo này.
 > - Rollback cuối cùng nên được thực hiện bằng `git revert` trong GitOps repository để Git vẫn là source of truth.
 
-## 1. Kiến trúc và nguyên tắc
+## 1. Vì sao mình chọn kiến trúc này?
 
 ```text
 Developer
@@ -58,7 +58,7 @@ GitHub gitops-repo (Helm chart/values)
                          Spring Boot       Vault KV secret
 ```
 
-### Quyết định chính
+### Những quyết định quan trọng
 
 - **GitHub** là SCM duy nhất. Bitbucket không được dùng trong luồng cuối cùng.
 - **Jenkinsfile** nằm ở `pipeline-repo`, không sao chép vào từng app repo.
@@ -75,9 +75,9 @@ GitHub gitops-repo (Helm chart/values)
 | [`demo-cicd-pipeline`](https://github.com/chinhlason/demo-cicd-pipeline) | Jenkinsfile dùng chung | Platform/Jenkins |
 | [`demo-cicd-gitops`](https://github.com/chinhlason/demo-cicd-gitops) | Helm chart, values, config và Argo CD source | Jenkins/Platform |
 
-## 2. Chuẩn bị ứng dụng Spring Boot
+## 2. Làm cho ứng dụng chạy ổn trước
 
-Ứng dụng dùng Java 25 và Spring Boot. Dependency JPA chưa được sử dụng đã được bỏ để test không yêu cầu datasource.
+Mình không muốn bắt đầu bằng Jenkins khi ứng dụng còn chưa chạy ổn. Ứng dụng dùng Java 25 và Spring Boot; dependency JPA chưa được sử dụng đã được bỏ để test không yêu cầu datasource.
 
 Health endpoint:
 
@@ -113,15 +113,15 @@ Kiểm tra local:
 curl -i http://127.0.0.1:8080/api/v1/ping
 ```
 
-Kết quả baseline đã xác nhận:
+Sau bước này, baseline của ứng dụng là:
 
 ```json
 {"healthy":"pong"}
 ```
 
-## 3. Tạo repository GitHub
+## 3. Tách source, pipeline và GitOps thành ba repository
 
-Tạo ba repository GitHub và dùng branch `main`:
+Mình tạo ba repository GitHub và dùng branch `main`:
 
 ```text
 https://github.com/chinhlason/demo-cicd-backend-app
@@ -129,13 +129,13 @@ https://github.com/chinhlason/demo-cicd-pipeline
 https://github.com/chinhlason/demo-cicd-gitops
 ```
 
-Mỗi repository là một Git repository độc lập. App repo chứa source; pipeline repo chứa Jenkinsfile; GitOps repo chứa Helm chart.
+Mỗi repository có một trách nhiệm riêng: app repo chứa source, pipeline repo chứa Jenkinsfile, còn GitOps repo chứa Helm chart và trạng thái deploy.
 
 Không ghi GitHub PAT vào README, log hoặc blog. PAT chỉ được lưu trong Jenkins và Argo CD credential store.
 
 ## 4. Chuẩn bị Ubuntu Server qua Tailscale
 
-Server triển khai:
+Mình triển khai trên một Ubuntu Server riêng, truy cập qua Tailscale:
 
 ```text
 SSH: sonnvt@100.101.40.114
@@ -146,11 +146,11 @@ Disk còn trống: khoảng 292 GiB
 Tailscale hostname: sonnvt-1
 ```
 
-Jenkins chỉ listen trên địa chỉ Tailscale. GitHub không gọi webhook trực tiếp vào server; Jenkins tự polling.
+Jenkins chỉ listen trên địa chỉ Tailscale. GitHub không gọi webhook trực tiếp vào server; Jenkins tự polling theo lịch.
 
 ## 5. Cài K3s một node
 
-Cài K3s trên Ubuntu Server:
+K3s là lựa chọn vừa đủ cho một server demo. Mình cài nó trực tiếp trên Ubuntu Server:
 
 ```bash
 curl -sfL https://get.k3s.io | sudo sh -
@@ -160,7 +160,7 @@ sudo k3s kubectl get nodes -o wide
 sudo k3s kubectl get pods -A
 ```
 
-Kết quả đã xác nhận:
+Kết quả sau khi cluster ổn định:
 
 ```text
 k3s: v1.37.2+k3s1
@@ -188,7 +188,7 @@ Nếu thấy lỗi `permission denied` với `/etc/rancher/k3s/k3s.yaml`, dùng 
 
 ## 6. Cài Helm và triển khai Vault
 
-Cài Helm:
+Mình dùng Helm để cài Vault thay vì tự viết toàn bộ manifest:
 
 ```bash
 curl -fsSL -o /tmp/get_helm.sh \
@@ -365,9 +365,9 @@ echo "vault kubernetes login: ok"
 
 Vault cảnh báo role chưa có audience. Demo vẫn chạy; production nên cấu hình audience khớp với ServiceAccount token.
 
-## 7. Cài Jenkins và chỉ expose qua Tailscale
+## 7. Đưa Jenkins lên server mà không đụng các port đang dùng
 
-Jenkins chạy trên Ubuntu host, truy cập bằng:
+Jenkins chạy bằng systemd trên Ubuntu host. Mình truy cập nó bằng:
 
 ```text
 http://100.101.40.114:18080
@@ -431,9 +431,9 @@ fatal: ... 403
 
 Nguyên nhân là credential chưa có quyền ghi vào repository.
 
-## 8. Jenkinsfile tập trung và onboarding service
+## 8. Dùng một Jenkinsfile chung cho nhiều service
 
-Jenkinsfile nằm trong `demo-cicd-pipeline`, không nằm trong app repo. Khi onboarding service mới, tạo một Jenkins Pipeline job và khai báo các parameter:
+Jenkinsfile nằm trong `demo-cicd-pipeline`, không nằm trong app repo. Khi onboarding service mới, mình tạo một Pipeline job rồi điền các parameter sau:
 
 | Parameter | Ví dụ |
 |---|---|
@@ -466,7 +466,7 @@ Lỗi thực tế: dán phần mô tả Markdown vào ô Groovy gây `unexpected
 6. `Update GitOps`
 7. `Sync Argo CD`
 
-Pipeline build image theo short commit SHA, push lên Docker Hub, lấy digest từ image local, cập nhật `values.yaml` rồi push GitOps.
+Pipeline lấy short commit SHA làm tag, push image lên Docker Hub, đọc digest từ image vừa build, cập nhật `values.yaml` rồi push GitOps.
 
 ### Phân quyền parameter
 
@@ -500,7 +500,7 @@ syncPolicy:
 
 Vì vậy khi Jenkins push GitOps commit, Argo CD có thể tự sync mà không cần Jenkins gọi API sync trực tiếp. Có thể giữ stage hiện tại để làm quality gate, hoặc bỏ lệnh patch và chỉ chờ trạng thái sau khi Auto-Sync đã ổn định.
 
-## 9. Build và push Docker image
+## 9. Build image và đẩy lên Docker Hub
 
 Dockerfile runtime:
 
@@ -512,7 +512,7 @@ EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 ```
 
-Jenkins đã build và push image thành công lên Docker Hub. Image được tham chiếu bằng digest, không chỉ bằng tag `latest`.
+Khi stage này chạy thành công, image đã có mặt trên Docker Hub. GitOps vẫn tham chiếu bằng digest thay vì chỉ dùng tag `latest`, để biết chính xác pod đang chạy artifact nào.
 
 Với Docker Hub repository private, tạo pull secret:
 
@@ -537,9 +537,9 @@ Token cần quyền `Repo Read-only`. Hai lỗi thật đã gặp:
 
 Khi secret đúng, pod chuyển từ `ImagePullBackOff` sang `Running`.
 
-## 10. Cài Argo CD và tạo Application
+## 10. Để Argo CD theo dõi GitOps repository
 
-Tạo namespace và cài Argo CD:
+Argo CD là phần nhận desired state từ GitOps repository. Mình cài nó vào namespace riêng rồi tạo một Application trỏ đến Helm chart:
 
 ```bash
 kubectl create namespace argocd \
@@ -631,7 +631,7 @@ kubectl port-forward -n democicd \
 curl -i http://127.0.0.1:18083/api/v1/ping
 ```
 
-Kết quả đã xác nhận:
+Kết quả sau khi Argo CD sync xong:
 
 ```text
 Argo CD: Synced / Healthy
@@ -639,9 +639,9 @@ pod: 1/1 Running hoặc 2/2 Running khi có Vault Agent
 API: HTTP 200
 ```
 
-## 11. External application config và Vault Agent
+## 11. Tách application config khỏi image và lấy secret từ Vault
 
-Mục tiêu là giữ `application.yml` trong app repo để chạy local, nhưng khi deploy dùng file từ GitOps.
+Đây là chỗ mình tách rõ hai nhu cầu: app repo vẫn giữ `application.yml` để chạy local, còn môi trường deploy đọc file cấu hình từ GitOps và secret từ Vault.
 
 ### 11.1 File cấu hình trong GitOps
 
@@ -714,7 +714,7 @@ kubectl port-forward -n democicd \
 curl -i http://127.0.0.1:18083/api/v1/secret
 ```
 
-Kết quả thực tế sau khi đổi secret trong Vault:
+Sau khi đổi secret trong Vault và rollout lại Deployment, API trả:
 
 ```json
 {"message":"hello from vault 2"}
@@ -750,9 +750,9 @@ app:
   api-key: ${app.secrets.api-key}
 ```
 
-## 12. Expose qua Traefik Ingress
+## 12. Nhận request từ bên ngoài qua Traefik Ingress
 
-K3s đã cài Traefik mặc định. GitOps chart tạo Ingress `networking.k8s.io/v1` với `ingressClassName: traefik`, route `/` đến Service ClusterIP.
+K3s đã cài Traefik mặc định nên mình chỉ cần thêm Ingress vào Helm chart. Ingress dùng `networking.k8s.io/v1`, `ingressClassName: traefik`, và route `/` đến Service ClusterIP.
 
 ```bash
 kubectl get ingress -n democicd
@@ -769,7 +769,7 @@ curl -i http://100.101.40.114/api/v1/ping
 curl -i http://100.101.40.114/api/v1/secret
 ```
 
-Kết quả đã xác nhận HTTP 200. Đường đi là:
+Request đã trả HTTP 200. Đường đi thực tế là:
 
 ```text
 Tailscale → node port 80 → Traefik → ClusterIP Service → Pod
@@ -777,7 +777,7 @@ Tailscale → node port 80 → Traefik → ClusterIP Service → Pod
 
 Ingress hiện chưa có DNS host hoặc TLS. Muốn public Internet cần public IP, firewall, DNS và certificate. Jenkins, Argo CD và Vault vẫn nên giữ trong mạng quản trị.
 
-## 13. Những lỗi đáng chú ý
+## 13. Những lỗi mình đã gặp
 
 ### Helm dry-run báo cluster unreachable
 
@@ -821,11 +821,11 @@ Repository private cần token `Repo Read-only` và đúng username Docker Hub.
 
 `Synced` chỉ nói manifest đã khớp Git. Cần chờ Deployment, init container, sidecar và readiness probe đạt `Healthy`. Trong demo, lỗi `quote` không tồn tại làm Vault init container fail; chọn pod đúng bằng tên cụ thể thay vì luôn lấy `.items[0]` trong lúc rolling update.
 
-## 14. Rollback
+## 14. Rollback mà không làm lệch GitOps
 
 ### 14.1 Rollback đúng theo GitOps
 
-Rollback bền vững nên thực hiện bằng GitOps repository:
+Với mô hình này, rollback bền vững nhất là đưa GitOps repository về commit trước:
 
 ```bash
 cd demo-cicd-gitops
@@ -873,7 +873,7 @@ trong khi secret đã trả:
 
 Điều này xác nhận Vault rollout đã hoạt động, nhưng chưa đủ bằng chứng rằng image `pong-v2` đã chạy trên cluster. Chặng rollback end-to-end vẫn cần xác nhận image digest trong Deployment, Jenkins build và Argo history trước khi đánh dấu hoàn tất.
 
-## 15. Bảo mật và giới hạn của demo
+## 15. Những giới hạn cần nói rõ
 
 - Tailscale giảm bề mặt truy cập nhưng không thay thế authentication và RBAC.
 - GitHub PAT, Docker Hub token, kubeconfig và Vault token chỉ lưu trong credential store an toàn.
@@ -883,7 +883,7 @@ trong khi secret đã trả:
 - Ingress chưa có domain/TLS.
 - Image digest được lưu trong GitOps, nhưng rollback cần được kiểm chứng bằng deployment history và API thực tế.
 
-## 16. Checklist kết quả
+## 16. Checklist triển khai
 
 - [x] Ứng dụng Spring Boot chạy local và test pass.
 - [x] Ba repository GitHub được tạo.
@@ -915,8 +915,8 @@ trong khi secret đã trả:
 
 ## Kết luận
 
-Một pipeline CI/CD có thể tái sử dụng không bắt đầu từ Jenkinsfile dài hơn. Nó bắt đầu từ ranh giới rõ giữa source code, pipeline definition, image và desired state.
+Sau khi làm xong demo, điều mình thấy rõ nhất là pipeline tái sử dụng không đến từ việc viết Jenkinsfile dài hơn. Nó đến từ ranh giới rõ giữa source code, pipeline definition, image và desired state.
 
-Trong demo này, service mới được onboarding bằng các parameter của Jenkins job. Jenkins build image theo commit, GitOps lưu digest, Argo CD triển khai, Vault cấp secret cho workload và Traefik nhận request qua Tailscale.
+Một service mới trong mô hình này chỉ cần được onboarding qua parameter của Jenkins job. Jenkins build image theo commit, GitOps lưu digest, Argo CD triển khai, Vault cấp secret cho workload và Traefik nhận request qua Tailscale.
 
-Các bước còn lại nên được hoàn thiện theo cùng nguyên tắc: kiểm chứng image đang chạy, rollback bằng GitOps commit, sau đó mới đánh dấu pipeline end-to-end là hoàn tất.
+Phần còn lại là hoàn tất release `pong-v2` và rollback end-to-end. Mình chưa đánh dấu hai bước đó hoàn tất khi chưa có bằng chứng từ Deployment, Argo history và API thực tế.
