@@ -74,10 +74,10 @@ Jenkins đọc Jenkinsfile từ repository tập trung. Khi onboarding service m
 Trạng thái dùng: `pending`, `in-progress`, `done`, `blocked`.
 
 - [x] `done` — 1. Chuẩn bị ứng dụng và làm xanh test
-- [ ] `pending` — 2. Tạo ba repository GitHub và quy ước branch
-- [ ] `pending` — 3. Chuẩn bị Ubuntu Server, Tailscale và quyền SSH
-- [ ] `pending` — 4. Cài K3s một node và kiểm tra cluster
-- [ ] `pending` — 5. Cài Helm và triển khai Vault
+- [x] `done` — 2. Tạo ba repository GitHub và quy ước branch
+- [x] `done` — 3. Chuẩn bị Ubuntu Server, Tailscale và quyền SSH
+- [x] `done` — 4. Cài K3s một node và kiểm tra cluster
+- [x] `done` — 5. Cài Helm và triển khai Vault
 - [ ] `pending` — 6. Cài Jenkins, cấu hình credential và polling GitHub
 - [ ] `pending` — 7. Tạo pipeline dùng Jenkinsfile tập trung
 - [ ] `pending` — 8. Đóng gói image và đẩy lên Docker Hub
@@ -116,58 +116,263 @@ Dependency JPA runtime và dependency test JPA đã được loại bỏ vì ứ
 
 ### Bước 2 — Tạo repository trên GitHub
 
-**Trạng thái:** `pending`
+**Trạng thái:** `done`
 
 Tạo `app-repo`, `pipeline-repo` và `gitops-repo` trong GitHub. Không dùng Bitbucket trong luồng này.
 
 **Bằng chứng cần ghi:**
 
 ```text
-app-repo: [URL]
-pipeline-repo: [URL]
-gitops-repo: [URL]
+Ngày hoàn tất: 2026-11-07
+app-repo: https://github.com/chinhlason/demo-cicd-backend-app
+app commit: 9d8c7405cc5ea6168dec42440e5a41ed89763aba
+pipeline-repo: https://github.com/chinhlason/demo-cicd-pipeline
+pipeline commit: 8ba42fe35d68333039a654e9ec836f1a6aead2bd
+gitops-repo: https://github.com/chinhlason/demo-cicd-gitops
+gitops commit: 50739ea2cb8b027aa9940c94576adfe99b5681e7
+branch: main
+remote verification: git ls-remote xác nhận cả ba repo có refs/heads/main.
 ```
+
+Các repository được tạo thành ba thư mục Git độc lập. Repo ứng dụng chứa source và file blog; hai repo còn lại bắt đầu bằng README tối thiểu. Push dùng SSH remote vì tài khoản GitHub đã xác thực bằng SSH.
 
 ### Bước 3 — Chuẩn bị server Ubuntu qua Tailscale
 
-**Trạng thái:** `pending`
+**Trạng thái:** `done`
 
 Server triển khai: `sonnvt@100.101.40.114`. Jenkins và các thành phần vận hành chỉ được truy cập trên mạng Tailscale. Cần xác nhận SSH key, hostname, dung lượng đĩa, Docker/container runtime và quyền sudo trước khi cài đặt.
 
 **Bằng chứng cần ghi:**
 
 ```text
-ssh: [pass/fail]
-tailscale connectivity: [pass/fail]
-server checks: [output/link]
+Ngày hoàn tất: 2026-11-07
+user: sonnvt
+hostname: sonnvt
+OS: Ubuntu 24.04
+CPU: 16
+memory: 15 GiB RAM, 4 GiB swap
+disk: 468 GiB total, 292 GiB available on /
+SSH: user xác nhận đăng nhập thành công qua Tailscale
+Tailscale: 100.101.40.114 / sonnvt-1 đang online
+sudo: có quyền sudo nhưng yêu cầu nhập mật khẩu
 ```
+
+Các bước cài đặt tiếp theo sẽ chạy trong phiên SSH tương tác để có thể nhập mật khẩu sudo khi cần.
 
 ### Bước 4 — Cài K3s một node
 
-**Trạng thái:** `pending`
+**Trạng thái:** `done`
 
 Cài K3s trên Ubuntu Server, kiểm tra node ở trạng thái `Ready`, kubeconfig và namespace dành cho các workload demo.
 
 **Bằng chứng cần ghi:**
 
 ```text
-kubectl get nodes: [output]
-kubectl get pods -A: [output/link]
+Ngày hoàn tất: 2026-11-07
+K3s version: v1.37.2+k3s1
+systemctl is-active k3s: active
+node: sonnvt / Ready / control-plane
+internal IP: 192.168.0.103
+container runtime: containerd://2.3.7-k3s1
+system pods: CoreDNS, local-path-provisioner, metrics-server và Traefik đều Running.
+install jobs: Gateway API CRD và Traefik CRD ở trạng thái Completed.
+```
+
+Cluster một node đã sẵn sàng cho các workload tiếp theo. Pod cài đặt Traefik có một lần restart trong lúc khởi động nhưng kết thúc ở trạng thái `Running`.
+
+**Log kiểm tra thực tế:**
+
+```text
+$ sudo systemctl is-active k3s
+active
+
+$ sudo k3s kubectl get nodes -o wide
+NAME     STATUS   ROLES           AGE   VERSION        INTERNAL-IP     EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION             CONTAINER-RUNTIME
+sonnvt   Ready    control-plane   68s   v1.37.2+k3s1   192.168.0.103   <none>        Ubuntu 24.04.2 LTS   7.0.0-28-generic (amd64)   containerd://2.3.7-k3s1
+
+$ sudo k3s kubectl get pods -A
+NAMESPACE     NAME                                      READY   STATUS      RESTARTS      AGE
+kube-system   coredns-577d995dff-52bmx                  1/1     Running     0             63s
+kube-system   helm-install-gateway-api-crd-7n46g        0/1     Completed   0             63s
+kube-system   helm-install-traefik-crd-zwvdq            0/1     Completed   0             63s
+kube-system   helm-install-traefik-rm6nn                0/1     Completed   1 (39s ago)   63s
+kube-system   local-path-provisioner-56c6584955-whwtd   1/1     Running     0             63s
+kube-system   metrics-server-778c4649b4-mjt9p           1/1     Running     0             63s
+kube-system   svclb-traefik-cd6ef3b1-lrsf4              2/2     Running     0             37s
+kube-system   traefik-68df944ff7-ck68v                  1/1     Running     0             37s
 ```
 
 ### Bước 5 — Cài Helm và Vault
 
-**Trạng thái:** `pending`
+**Trạng thái:** `done`
 
 Cài Helm, triển khai Vault bằng chart phù hợp với môi trường demo và ghi rõ mode chạy, storage, unseal và policy. Token/root credential không được commit vào repository hoặc đưa vào bài viết.
 
 **Bằng chứng cần ghi:**
 
 ```text
-helm list -A: [output]
-vault status: [output]
+Ngày bắt đầu: 2026-11-07
+Helm: v3.22.1
+Checksum: verified by installer
+helm status vault -n vault: deployed, revision 1
+vault status: Initialized true, Sealed false
 policy/secret paths used: [redacted description]
 ```
+
+**Log cài Helm:**
+
+```text
+Downloading https://get.helm.sh/helm-v3.22.1-linux-amd64.tar.gz
+Verifying checksum... Done.
+Preparing to install helm into /usr/local/bin
+helm installed into /usr/local/bin/helm
+version.BuildInfo{Version:"v3.22.1", GitCommit:"d6c1a0e4027caa6abc7892e7ea9f0cda7447baa3", GitTreeState:"clean", GoVersion:"go1.26.9"}
+```
+
+**Lần dry-run Vault đầu tiên:** thất bại vì Helm chưa dùng kubeconfig chuẩn của K3s:
+
+```text
+Error: INSTALLATION FAILED: Kubernetes cluster unreachable: Get "https://127.0.0.1:6443/version": tls: failed to verify certificate: x509: certificate signed by unknown authority
+```
+
+Nguyên nhân là context/kubeconfig của Helm chưa trỏ tới `/etc/rancher/k3s/k3s.yaml`. Không tắt kiểm tra TLS để xử lý lỗi này.
+
+Sau khi sửa kubeconfig, lệnh dry-run có in phần `NOTES` của Vault nhưng không tạo release. Kiểm tra xác nhận:
+
+```text
+$ helm status vault -n vault
+Error: release: not found
+
+$ kubectl get pods,pvc -n vault
+No resources found in vault namespace.
+```
+
+Dry-run chỉ kiểm tra manifest; cần chạy lại `helm install` không có cờ `--dry-run` để triển khai thật.
+
+**Log cài Vault thật:**
+
+```text
+Helm release: vault
+namespace: vault
+chart: hashicorp/vault:0.34.1
+status: deployed
+revision: 1
+PVC data-vault-0: Bound, 10Gi, local-path, RWO
+vault-agent-injector: Running
+vault-0: ContainerCreating trong lần kiểm tra đầu tiên
+```
+
+Vault release đã được tạo thành công và PVC đã bind. Cần chờ `vault-0` chuyển sang `Running` trước khi initialize/unseal.
+
+**Kiểm tra sau khi pod khởi động:**
+
+```text
+vault-0: 0/1 Running, 0 restarts
+vault-agent-injector: 1/1 Running, 0 restarts
+data-vault-0: Bound, 10Gi, local-path, RWO
+```
+
+Container Vault đã chạy nhưng chưa `Ready`; bước tiếp theo là kiểm tra trạng thái rồi initialize và unseal. Không ghi unseal key hoặc root token vào blog.
+
+**Log trạng thái Vault trước khi initialize:**
+
+```text
+Seal Type: shamir
+Initialized: false
+Sealed: true
+Total Shares: 0
+Threshold: 0
+Version: 2.0.4
+Storage Type: file
+HA Enabled: false
+```
+
+Lệnh trả exit code `2` vì Vault chưa được initialize; đây là trạng thái mong đợi ở lần cài đầu tiên.
+
+**Kết quả initialize:**
+
+```text
+Vault initialized successfully
+key shares: 5
+key threshold: 3
+unseal keys/root token: không ghi vào tài liệu
+```
+
+Các key và root token phải được lưu ngoài Git, chat và blog. Nếu credential thật đã bị chia sẻ, cần thay thế chúng trước khi dùng môi trường production.
+
+**Kết quả unseal:**
+
+```text
+Unseal Progress: 1/3 -> 2/3 -> 3/3
+Initialized: true
+Sealed: false
+Total Shares: 5
+Threshold: 3
+Storage Type: file
+HA Enabled: false
+vault-0: 1/1 Running
+vault-agent-injector: 1/1 Running
+```
+
+Unseal chỉ mở khóa Vault để phục vụ request; chưa tạo secret engine, policy hoặc quyền truy cập cho Jenkins và ứng dụng.
+
+**KV secret demo:**
+
+```text
+engine: app-secrets (kv-v2)
+path: app-secrets/data/democicd
+version: 1
+read-back: thành công
+secret value: không ghi vào tài liệu
+```
+
+Secret đã được ghi và đọc lại bằng Vault CLI. Bước tiếp theo là tạo policy giới hạn quyền đọc cho workload ứng dụng.
+
+**Policy cho ứng dụng:**
+
+```text
+policy: democicd-app
+path: app-secrets/data/democicd
+capabilities: [read]
+result: uploaded and read back successfully
+```
+
+Policy chỉ cho phép đọc secret demo; không có quyền ghi hoặc xóa.
+
+**Kiểm tra Kubernetes Auth prerequisite:**
+
+```text
+Vault server service account: vault
+create tokenreviews as system:serviceaccount:vault:vault: yes
+```
+
+Service account của Vault có quyền làm token reviewer; có thể cấu hình Kubernetes auth mà không cấp thêm quyền.
+
+**Kubernetes Auth và role cho ứng dụng:**
+
+```text
+auth method: kubernetes/
+config: written successfully
+role: democicd-app
+bound service account: democicd-app
+bound namespace: democicd
+policy: democicd-app
+token TTL: 1h
+```
+
+Vault cảnh báo role chưa khai báo JWT audience. Demo vẫn hoạt động; production nên cấu hình audience khớp với service account token để tăng kiểm tra claim.
+
+**Tạo workload identity và kiểm tra login end-to-end:**
+
+```text
+namespace: democicd
+service account: democicd-app
+kubectl get nodes: sonnvt Ready
+Vault Kubernetes login: ok
+JWT/client token: không ghi vào tài liệu
+```
+
+ServiceAccount của ứng dụng khớp với role Vault cả về tên và namespace. Login thành công xác nhận Vault có thể xác thực JWT do Kubernetes cấp và cấp token theo policy `democicd-app`.
 
 ### Bước 6 — Cài Jenkins và cấu hình polling GitHub
 
