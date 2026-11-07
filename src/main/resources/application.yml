@@ -1,3 +1,7 @@
 spring:
   application:
     name: democicd
+
+app:
+  # Local fallback only; production value comes from GitOps + Vault.
+  secret-message: ${APP_SECRET_MESSAGE:local-development-secret}
