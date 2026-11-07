@@ -464,6 +464,8 @@ Jenkins đã package ứng dụng, build Docker image từ `Dockerfile` và push
 
 GitOps repo đã có chart `charts/demo-cicd-backend` tại commit `6c04f7e`. Argo CD đã được cài vào namespace `argocd`; toàn bộ controller, repo server, server, Redis, Dex và notifications đều `1/1 Running`.
 
+GitOps repository `https://github.com/chinhlason/demo-cicd-gitops.git` đã kết nối thành công trong Argo CD bằng HTTPS credential. PAT chỉ lưu trong Argo CD credential store, không ghi vào Git hoặc blog.
+
 **Bằng chứng cần ghi:**
 
 ```text
