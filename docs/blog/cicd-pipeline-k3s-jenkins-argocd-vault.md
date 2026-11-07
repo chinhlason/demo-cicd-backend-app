@@ -78,8 +78,8 @@ Trạng thái dùng: `pending`, `in-progress`, `done`, `blocked`.
 - [x] `done` — 3. Chuẩn bị Ubuntu Server, Tailscale và quyền SSH
 - [x] `done` — 4. Cài K3s một node và kiểm tra cluster
 - [x] `done` — 5. Cài Helm và triển khai Vault
-- [ ] `in-progress` — 6. Cài Jenkins, cấu hình credential và polling GitHub
-- [ ] `pending` — 7. Tạo pipeline dùng Jenkinsfile tập trung
+- [x] `done` — 6. Cài Jenkins, cấu hình credential và polling GitHub
+- [ ] `in-progress` — 7. Tạo pipeline dùng Jenkinsfile tập trung
 - [ ] `pending` — 8. Đóng gói image và đẩy lên Docker Hub
 - [ ] `pending` — 9. Tạo GitOps repository, Helm chart và Argo CD Application
 - [ ] `pending` — 10. Inject secret Vault vào ứng dụng
@@ -376,7 +376,7 @@ ServiceAccount của ứng dụng khớp với role Vault cả về tên và nam
 
 ### Bước 6 — Cài Jenkins và cấu hình polling GitHub
 
-**Trạng thái:** `in-progress`
+**Trạng thái:** `done`
 
 Cài Jenkins trên server, chỉ expose qua Tailscale. Cấu hình credential tối thiểu cho GitHub, Docker Hub, GitOps repository và Vault. Job dùng SCM polling thay vì webhook công khai.
 
@@ -391,6 +391,7 @@ dashboard: opened successfully
 admin username: không ghi vào tài liệu
 polling interval: [value]
 credential IDs (names only): github-https
+polling: configured with `H/5 * * * *`
 ```
 
 **Log cài đặt Jenkins:**
@@ -408,9 +409,11 @@ Jenkins home cũ đã được di chuyển sang thư mục backup trước khi t
 
 GitHub credential đã được tạo trong Jenkins dưới dạng username/password với ID `github-https`. Personal Access Token không được ghi vào log, blog hoặc Git.
 
+Job `demo-cicd-backend` đã đọc Jenkinsfile từ `demo-cicd-pipeline`; SCM polling và checkout ứng dụng hoạt động. Bước Jenkins setup, credential và polling hoàn tất.
+
 ### Bước 7 — Pipeline dùng Jenkinsfile tập trung
 
-**Trạng thái:** `pending`
+**Trạng thái:** `in-progress`
 
 Jenkinsfile trong `pipeline-repo` nhận các tham số onboarding cần thiết, sau đó thực hiện các stage:
 
@@ -424,10 +427,14 @@ Jenkinsfile trong `pipeline-repo` nhận các tham số onboarding cần thiết
 **Bằng chứng cần ghi:**
 
 ```text
-build number: [value]
-commit SHA: [value]
-stage result: [output/link]
+job: demo-cicd-backend
+pipeline source: demo-cicd-pipeline/Jenkinsfile
+application checkout: success
+Test: success
+build result: SUCCESS
 ```
+
+Lần chạy đầu tiên fail vì agent Jenkins dùng Java 21 trong khi `pom.xml` yêu cầu release 25 (`release version 25 not supported`). Sau khi cài JDK 25 trên server, pipeline chạy thành công. Các stage build image, push Docker Hub và cập nhật GitOps sẽ bổ sung ở các bước tiếp theo.
 
 ### Bước 8 — Docker Hub
 
