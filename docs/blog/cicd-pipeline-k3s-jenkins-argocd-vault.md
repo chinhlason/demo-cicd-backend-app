@@ -80,7 +80,7 @@ Trạng thái dùng: `pending`, `in-progress`, `done`, `blocked`.
 - [x] `done` — 5. Cài Helm và triển khai Vault
 - [x] `done` — 6. Cài Jenkins, cấu hình credential và polling GitHub
 - [ ] `in-progress` — 7. Tạo pipeline dùng Jenkinsfile tập trung
-- [ ] `in-progress` — 8. Đóng gói image và đẩy lên Docker Hub
+- [x] `done` — 8. Đóng gói image và đẩy lên Docker Hub
 - [ ] `pending` — 9. Tạo GitOps repository, Helm chart và Argo CD Application
 - [ ] `pending` — 10. Inject secret Vault vào ứng dụng
 - [ ] `pending` — 11. Chạy end-to-end và kiểm tra rollback
@@ -449,9 +449,12 @@ App repo đã có `Dockerfile` runtime dùng `eclipse-temurin:25-jre`; Docker Hu
 ```text
 image: [dockerhub-user/image]
 credential ID: dockerhub
-tag: [commit SHA]
-digest: [sha256 digest]
+tag: short commit SHA (12 ký tự)
+push: success
+digest: chưa ghi nhận từ build log
 ```
+
+Jenkins đã package ứng dụng, build Docker image từ `Dockerfile` và push thành công lên Docker Hub. Jenkins agent được cấp quyền dùng Docker socket; Docker token không xuất hiện trong log hoặc tài liệu.
 
 ### Bước 9 — GitOps, Helm và Argo CD
 
