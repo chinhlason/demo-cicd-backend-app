@@ -28,7 +28,7 @@ Phạm vi demo:
 - Một repository ứng dụng, một repository tập trung Jenkinsfile, và một repository GitOps chứa Helm chart/values.
 - Jenkins chạy test, build image và đẩy image lên Docker Hub; repository GitOps lưu image digest bất biến để Argo CD triển khai.
 - Argo CD theo dõi repository GitOps rồi đồng bộ workload vào K3s.
-- Vault cấp secret cho Jenkins và cung cấp một secret nhỏ cho ứng dụng.
+- Vault cung cấp secret nhỏ cho ứng dụng. Jenkins hiện dùng Jenkins Credential Store cho GitHub, Docker Hub và kubeconfig Argo CD; tích hợp Jenkins đọc credential trực tiếp từ Vault chưa nằm trong bản demo này.
 - Loại dependency JPA chưa dùng để test không còn phụ thuộc datasource.
 
 ## Kiến trúc
@@ -166,6 +166,26 @@ Các bước cài đặt tiếp theo sẽ chạy trong phiên SSH tương tác �
 
 Cài K3s trên Ubuntu Server, kiểm tra node ở trạng thái `Ready`, kubeconfig và namespace dành cho các workload demo.
 
+**Lệnh cài đặt:**
+
+```bash
+curl -sfL https://get.k3s.io | sudo sh -
+sudo systemctl enable --now k3s
+sudo systemctl is-active k3s
+sudo k3s kubectl get nodes -o wide
+sudo k3s kubectl get pods -A
+```
+
+Sau khi cấp quyền đọc kubeconfig cho user SSH, dùng `kubectl` và `helm` không cần `sudo`:
+
+```bash
+mkdir -p "$HOME/.kube"
+sudo cp /etc/rancher/k3s/k3s.yaml "$HOME/.kube/config"
+sudo chown "$USER:$(id -gn)" "$HOME/.kube/config"
+chmod 600 "$HOME/.kube/config"
+export KUBECONFIG="$HOME/.kube/config"
+```
+
 **Bằng chứng cần ghi:**
 
 ```text
@@ -208,6 +228,23 @@ kube-system   traefik-68df944ff7-ck68v                  1/1     Running     0   
 **Trạng thái:** `done`
 
 Cài Helm, triển khai Vault bằng chart phù hợp với môi trường demo và ghi rõ mode chạy, storage, unseal và policy. Token/root credential không được commit vào repository hoặc đưa vào bài viết.
+
+**Lệnh cài Helm và Vault:**
+
+```bash
+curl -fsSL -o /tmp/get_helm.sh \
+  https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+chmod 700 /tmp/get_helm.sh
+/tmp/get_helm.sh
+
+helm repo add hashicorp https://helm.releases.hashicorp.com
+helm repo update
+
+helm install vault hashicorp/vault \
+  --namespace vault \
+  --create-namespace \
+  --version 0.34.1
+```
 
 **Bằng chứng cần ghi:**
 
@@ -375,11 +412,15 @@ JWT/client token: không ghi vào tài liệu
 
 ServiceAccount của ứng dụng khớp với role Vault cả về tên và namespace. Login thành công xác nhận Vault có thể xác thực JWT do Kubernetes cấp và cấp token theo policy `democicd-app`.
 
+#### Nếu mất Initial Root Token
+
+Vault không lưu lại Initial Root Token để đọc lại. Không chạy lại `vault operator init` trên Vault đã initialized. Cần dùng quy trình `vault operator generate-root` với quorum tối thiểu của unseal key, sau đó lưu root token mới trong nơi quản lý credential an toàn. Unseal key, OTP, nonce và root token không đưa vào Git, chat hoặc blog.
+
 ### Bước 6 — Cài Jenkins và cấu hình polling GitHub
 
 **Trạng thái:** `done`
 
-Cài Jenkins trên server, chỉ expose qua Tailscale. Cấu hình credential tối thiểu cho GitHub, Docker Hub, GitOps repository và Vault. Job dùng SCM polling thay vì webhook công khai.
+Cài Jenkins trên server, chỉ expose qua Tailscale. Cấu hình credential tối thiểu cho GitHub, Docker Hub và GitOps repository. Job dùng SCM polling thay vì webhook công khai; secret của workload ứng dụng được lấy từ Vault sau khi deploy.
 
 **Bằng chứng cần ghi:**
 
@@ -411,6 +452,38 @@ Jenkins home cũ đã được di chuyển sang thư mục backup trước khi t
 GitHub credential đã được tạo trong Jenkins dưới dạng username/password với ID `github-https`. Personal Access Token không được ghi vào log, blog hoặc Git.
 
 Job `demo-cicd-backend` đã đọc Jenkinsfile từ `demo-cicd-pipeline`; SCM polling và checkout ứng dụng hoạt động. Bước Jenkins setup, credential và polling hoàn tất.
+
+Để tránh xung đột với các container đang dùng `8080` và `8081`, Jenkins được chạy ở `18080`:
+
+```bash
+sudo install -d /etc/systemd/system/jenkins.service.d
+sudo tee /etc/systemd/system/jenkins.service.d/override.conf >/dev/null <<'EOF'
+[Service]
+Environment="JENKINS_PORT=18080"
+Environment="JENKINS_LISTEN_ADDRESS=100.101.40.114"
+Environment="JENKINS_OPTS=--httpPort=18080 --httpListenAddress=100.101.40.114"
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl restart jenkins
+sudo systemctl is-active jenkins
+sudo ss -ltnp | grep ':18080'
+```
+
+Jenkins được cấp quyền build/push image bằng Docker group:
+
+```bash
+sudo usermod -aG docker jenkins
+sudo systemctl restart jenkins
+sudo -u jenkins -H docker version
+```
+
+#### Lỗi Jenkins thực tế
+
+- Lần đầu Jenkins không khởi động vì `8080` đã được `blog-api-1` dùng; thử chuyển sang `8081` nhưng `blog-web-1` cũng đang dùng cổng này. Cuối cùng chọn `18080` và bind vào `100.101.40.114`.
+- Jenkins home cũ có các user không còn dùng. Home được backup, sau đó tạo lại user quản trị mới qua setup wizard; username, password và token không ghi vào tài liệu.
+- Một lần cấu hình Pipeline bị dán nhầm Markdown vào ô Groovy, gây lỗi `unexpected token: URL`. Cấu hình đúng phải dùng **Pipeline script from SCM**, không dán nội dung mô tả vào Script box.
+- GitHub trả `403 remote: Write access to repository not granted` khi credential chưa có quyền ghi. Sau khi cập nhật PAT đúng repository và scope, checkout/push GitOps hoạt động.
 
 ### Bước 7 — Pipeline dùng Jenkinsfile tập trung
 
@@ -464,6 +537,16 @@ Các stage của pipeline:
 6. Gọi Kubernetes API để trigger sync Application và chờ trạng thái `Synced/Healthy`.
 
 Việc đọc secret từ Vault vẫn là phần tiếp theo của bài demo. Credential `github-https` cần có quyền ghi vào GitOps repository để stage cuối hoạt động.
+
+#### Hiển thị tiến trình các stage
+
+Jenkinsfile dùng Declarative Pipeline với các `stage(...)` có tên rõ ràng. Cài plugin **Pipeline: Stage View** (`pipeline-stage-view`), mở job rồi chọn **Stages** để xem bảng lịch sử theo build. Mỗi cột là một stage như `Test`, `Package`, `Build and push image`, `Update GitOps` và `Sync Argo CD`; ô màu đỏ/xanh cho biết kết quả và có thể mở log của stage.
+
+Nếu cần sơ đồ graph cho một build, cài thêm plugin **Pipeline Graph View** và mở **Pipeline Overview** trong build đó.
+
+#### Trade-off của stage sync Argo CD trực tiếp
+
+Stage `Sync Argo CD` giúp pipeline báo lỗi ngay khi Application không đạt `Synced/Healthy`, nhưng Jenkins phải giữ credential có quyền patch Application và phải chờ trạng thái rollout. Với Auto-Sync, Argo CD vốn đã tự triển khai commit GitOps; stage này có thể được rút gọn thành bước chờ trạng thái hoặc bỏ đi sau khi cơ chế polling/sync đã ổn định.
 
 #### Credential và RBAC cho stage sync Argo CD
 
@@ -666,6 +749,10 @@ spec:
 EOF
 ```
 
+`syncPolicy.automated` khiến Argo CD tự sync khi GitOps repository thay đổi. `selfHeal` sửa lại resource nếu cluster bị chỉnh lệch, còn `prune` xóa resource đã bị loại khỏi manifest Git. Đây là lý do Jenkins chỉ cần push thay đổi vào GitOps repo trong mô hình GitOps.
+
+Rollback trên UI không phù hợp khi Auto-Sync đang bật: cần tắt Auto-Sync tạm thời, chọn **History and Rollback**, chọn revision cũ rồi xác nhận. Sau rollback, nên tạo `git revert` trong GitOps repo để trạng thái Git và cluster không lệch.
+
 Với Docker Hub repository private, tạo pull secret trong namespace ứng dụng. Token cần quyền `Repo Read-only`:
 
 ```bash
@@ -700,6 +787,17 @@ ssh -N -L 18082:127.0.0.1:18082 sonnvt@100.101.40.114
 ```
 
 Mở `https://127.0.0.1:18082`. Port `18082` được chọn vì các port `8080`, `8081` và `8082` đã có dịch vụ khác sử dụng.
+
+Nếu cổng local `18082` đã bị chiếm, dùng một cặp cổng khác, ví dụ `18084`:
+
+```bash
+ssh -N \
+  -L 18084:127.0.0.1:18084 \
+  sonnvt@100.101.40.114 \
+  'KUBECONFIG=/home/sonnvt/.kube/config kubectl -n argocd port-forward --address 127.0.0.1 svc/argocd-server 18084:443'
+```
+
+Mở `https://127.0.0.1:18084` và giữ terminal SSH mở trong suốt phiên thao tác.
 
 Khi cần buộc Argo CD đọc lại commit GitOps hoặc sync ngay:
 
@@ -750,7 +848,7 @@ curl http://127.0.0.1:18083/api/v1/ping:
   {"healthy":"pong"}
 ```
 
-Trong lần triển khai đầu, pod gặp `ImagePullBackOff` vì repository Docker Hub private nhưng token chỉ có quyền `Repo Public Read-only`. Sau khi tạo token `Repo Read-only`, cập nhật secret `dockerhub-pull` với username `sonnvt` và đồng bộ lại Argo CD, pod pull được image và trở thành `Running`.
+Trong lần triển khai đầu, pod gặp `ImagePullBackOff` vì repository Docker Hub private nhưng token chỉ có quyền `Repo Public Read-only`. Một lần khác secret dùng nhầm username `chinhlason` thay vì username Docker Hub thực tế `sonnvt`. Sau khi tạo token `Repo Read-only`, cập nhật secret `dockerhub-pull` với username `sonnvt` và đồng bộ lại Argo CD, pod pull được image và trở thành `Running`.
 
 ### Bước 10 — Secret Vault trong ứng dụng
 
@@ -903,6 +1001,21 @@ network path: Tailscale → node port 80 → Traefik → ClusterIP Service → P
 **Trạng thái:** `pending`
 
 Tạo một commit thay đổi nhỏ, chờ Jenkins polling, kiểm tra image mới, GitOps commit, Argo CD sync và ứng dụng đang chạy. Sau đó thử rollback về image tag trước và ghi thời gian, lệnh, kết quả.
+
+Đã tạo release kiểm thử bằng commit app `c8a31cd` với health response `pong-v2`. Test local pass và commit đã được push lên `main`. Lần kiểm tra qua Ingress vẫn trả `{"healthy":"pong"}` trong khi secret trả giá trị Vault mới, cho thấy Vault rollout đã hoạt động nhưng image release mới chưa được xác nhận đang chạy. Cần kiểm tra image digest trong Deployment và log Jenkins trước khi đánh dấu chặng này hoàn tất.
+
+Rollback ưu tiên bằng GitOps:
+
+```bash
+cd demo-cicd-gitops
+git pull --ff-only origin main
+git log --oneline -- charts/demo-cicd-backend/values.yaml
+git show --stat <commit-deploy-code-moi>
+git revert <commit-deploy-code-moi>
+git push origin main
+```
+
+Sau đó chờ Argo CD tự sync, kiểm tra `Synced/Healthy`, `rollout status` và gọi lại `/api/v1/ping`. Rollback trực tiếp từ Argo CD UI chỉ nên dùng cho thao tác tạm thời; GitOps repository vẫn phải được revert để giữ source of truth.
 
 **Bằng chứng cần ghi:**
 
