@@ -78,7 +78,7 @@ Trạng thái dùng: `pending`, `in-progress`, `done`, `blocked`.
 - [x] `done` — 3. Chuẩn bị Ubuntu Server, Tailscale và quyền SSH
 - [x] `done` — 4. Cài K3s một node và kiểm tra cluster
 - [x] `done` — 5. Cài Helm và triển khai Vault
-- [ ] `pending` — 6. Cài Jenkins, cấu hình credential và polling GitHub
+- [ ] `in-progress` — 6. Cài Jenkins, cấu hình credential và polling GitHub
 - [ ] `pending` — 7. Tạo pipeline dùng Jenkinsfile tập trung
 - [ ] `pending` — 8. Đóng gói image và đẩy lên Docker Hub
 - [ ] `pending` — 9. Tạo GitOps repository, Helm chart và Argo CD Application
@@ -376,17 +376,30 @@ ServiceAccount của ứng dụng khớp với role Vault cả về tên và nam
 
 ### Bước 6 — Cài Jenkins và cấu hình polling GitHub
 
-**Trạng thái:** `pending`
+**Trạng thái:** `in-progress`
 
 Cài Jenkins trên server, chỉ expose qua Tailscale. Cấu hình credential tối thiểu cho GitHub, Docker Hub, GitOps repository và Vault. Job dùng SCM polling thay vì webhook công khai.
 
 **Bằng chứng cần ghi:**
 
 ```text
-Jenkins URL (Tailscale): [redacted/internal URL]
+Jenkins URL (Tailscale): http://100.101.40.114:18080
+service: active
+listen: *:18080 (Java)
 polling interval: [value]
 credential IDs (names only): [list]
 ```
+
+**Log cài đặt Jenkins:**
+
+```text
+Java: OpenJDK 21
+Jenkins LTS: cài bằng Debian repository chính thức
+systemctl is-active jenkins: active
+LISTEN: *:18080, process java
+```
+
+Port mặc định `8080` đã được `blog-api-1` sử dụng và `8081` đã được `blog-web-1` sử dụng. Jenkins được cấu hình qua systemd drop-in với `JENKINS_PORT=18080` và `JENKINS_OPTS=--httpPort=18080`. Truy cập quản trị chỉ qua địa chỉ Tailscale; credential khởi tạo không ghi vào blog.
 
 ### Bước 7 — Pipeline dùng Jenkinsfile tập trung
 
