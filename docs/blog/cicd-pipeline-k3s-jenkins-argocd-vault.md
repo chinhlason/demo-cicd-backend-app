@@ -81,7 +81,7 @@ Trạng thái dùng: `pending`, `in-progress`, `done`, `blocked`.
 - [x] `done` — 6. Cài Jenkins, cấu hình credential và polling GitHub
 - [ ] `in-progress` — 7. Tạo pipeline dùng Jenkinsfile tập trung
 - [x] `done` — 8. Đóng gói image và đẩy lên Docker Hub
-- [ ] `pending` — 9. Tạo GitOps repository, Helm chart và Argo CD Application
+- [ ] `in-progress` — 9. Tạo GitOps repository, Helm chart và Argo CD Application
 - [ ] `pending` — 10. Inject secret Vault vào ứng dụng
 - [ ] `pending` — 11. Chạy end-to-end và kiểm tra rollback
 - [ ] `pending` — 12. Đóng gói lại thành bài viết hoàn chỉnh
@@ -458,9 +458,11 @@ Jenkins đã package ứng dụng, build Docker image từ `Dockerfile` và push
 
 ### Bước 9 — GitOps, Helm và Argo CD
 
-**Trạng thái:** `pending`
+**Trạng thái:** `in-progress`
 
 `gitops-repo` chứa chart tối thiểu cho Deployment, Service, Secret reference và values theo môi trường. Argo CD Application theo dõi repository này; Jenkins chỉ thay đổi image tag, còn Argo CD chịu trách nhiệm đồng bộ vào K3s.
+
+GitOps repo đã có chart `charts/demo-cicd-backend` tại commit `6c04f7e`. Argo CD đã được cài vào namespace `argocd`; toàn bộ controller, repo server, server, Redis, Dex và notifications đều `1/1 Running`.
 
 **Bằng chứng cần ghi:**
 
