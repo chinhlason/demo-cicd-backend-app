@@ -468,6 +468,25 @@ GitOps repository `https://github.com/chinhlason/demo-cicd-gitops.git` đã kế
 
 **Các lệnh cài đặt và truy cập Argo CD:**
 
+Trên máy K3s, cấp kubeconfig cho user SSH trước khi chạy `kubectl` không có `sudo`:
+
+```bash
+if [ ! -r "$HOME/.kube/config" ]; then
+  mkdir -p "$HOME/.kube"
+  sudo cp /etc/rancher/k3s/k3s.yaml "$HOME/.kube/config"
+  sudo chown "$USER:$(id -gn)" "$HOME/.kube/config"
+  chmod 600 "$HOME/.kube/config"
+fi
+
+grep -qxF 'export KUBECONFIG="$HOME/.kube/config"' "$HOME/.zshrc" 2>/dev/null \
+  || echo 'export KUBECONFIG="$HOME/.kube/config"' >> "$HOME/.zshrc"
+
+export KUBECONFIG="$HOME/.kube/config"
+kubectl get nodes
+```
+
+Cài Argo CD vào cluster:
+
 ```bash
 kubectl create namespace argocd \
   --dry-run=client -o yaml \
@@ -485,6 +504,51 @@ kubectl wait \
   --timeout=180s
 
 kubectl get pods -n argocd
+```
+
+Kết nối GitOps repository trong Argo CD UI: vào **Settings → Repositories → Connect Repo using HTTPS**, nhập URL `https://github.com/chinhlason/demo-cicd-gitops.git`, username GitHub và PAT. PAT chỉ nhập vào credential store, không ghi vào Git.
+
+Tạo Argo CD Application trỏ đến Helm chart:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-cicd-backend
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/chinhlason/demo-cicd-gitops.git
+    targetRevision: main
+    path: charts/demo-cicd-backend
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: democicd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+EOF
+```
+
+Với Docker Hub repository private, tạo pull secret trong namespace ứng dụng. Token cần quyền `Repo Read-only`:
+
+```bash
+read -r -s "DOCKERHUB_PULL_TOKEN?Docker Hub read-only token: "
+printf '\n'
+
+kubectl create secret docker-registry dockerhub-pull \
+  --namespace democicd \
+  --docker-server=https://index.docker.io/v1/ \
+  --docker-username=sonnvt \
+  --docker-password="$DOCKERHUB_PULL_TOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+unset DOCKERHUB_PULL_TOKEN
 ```
 
 Lấy mật khẩu admin lần đầu:
@@ -505,6 +569,36 @@ ssh -N -L 18082:127.0.0.1:18082 sonnvt@100.101.40.114
 ```
 
 Mở `https://127.0.0.1:18082`. Port `18082` được chọn vì các port `8080`, `8081` và `8082` đã có dịch vụ khác sử dụng.
+
+Khi cần buộc Argo CD đọc lại commit GitOps hoặc sync ngay:
+
+```bash
+kubectl -n argocd annotate application demo-cicd-backend \
+  argocd.argoproj.io/refresh=hard \
+  --overwrite
+
+kubectl -n argocd patch application demo-cicd-backend \
+  --type merge \
+  -p '{"operation":{"sync":{"prune":true}}}'
+```
+
+Kiểm tra Application, workload và service:
+
+```bash
+kubectl get application -n argocd demo-cicd-backend
+kubectl get pods -n democicd
+kubectl get svc -n democicd
+```
+
+Kiểm tra health endpoint qua port-forward:
+
+```bash
+kubectl port-forward -n democicd \
+  svc/demo-cicd-backend-demo-cicd-backend 18083:8080
+
+# terminal khác
+curl -i http://127.0.0.1:18083/api/v1/ping
+```
 
 **Bằng chứng cần ghi:**
 
